@@ -1,17 +1,16 @@
 import math
-import os
 from typing import Optional
 
 import pandas as pd
+import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-import numpy as np
 
-# -------------------- Config --------------------
+# ==================== Config geral ====================
 st.set_page_config(page_title="📊 Análise Estatística Endurance", layout="wide")
 
-# -------------------- Utils --------------------
+# ==================== Utils ====================
 def time_to_seconds(t):
     """Converte 'M:SS.mmm' ou string numérica para segundos; retorna NaN se não parsear."""
     try:
@@ -29,7 +28,7 @@ def coerce_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series.astype(str).str.replace(",", "."), errors="coerce")
 
 def find_lap_column(df: pd.DataFrame) -> str:
-    """Tenta localizar a coluna de número de volta. Retorna 'Lap' (normalizado/criado)."""
+    """Tenta localizar a coluna de número de volta. Retorna/garante 'Lap'."""
     candidates = [c for c in df.columns if c.strip().lower() in {"lap", "leadlap", "lap #", "#lap"}]
     if candidates:
         if "Lap" not in df.columns:
@@ -48,10 +47,12 @@ def find_lap_time_column(df: pd.DataFrame) -> Optional[str]:
     for c in exacts:
         if c in df.columns:
             return c
+
     for c in df.columns:
         cl = c.lower().replace(" ", "").replace("_","")
         if "lap" in cl and ("tm" in cl or "time" in cl):
             return c
+
     best, score = None, 0.0
     for c in df.columns:
         conv = df[c].apply(time_to_seconds)
@@ -63,6 +64,7 @@ def find_lap_time_column(df: pd.DataFrame) -> Optional[str]:
 
 @st.cache_data
 def load_excel(file) -> dict:
+    # openpyxl é necessário para .xlsx
     return pd.read_excel(file, sheet_name=None)
 
 def preprocess_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -81,7 +83,7 @@ def preprocess_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def derive_stints(df: pd.DataFrame, lap_time_col: str, threshold: float = 300.0) -> pd.DataFrame:
-    """Cria 'Stint' com base em Lap Tm > limiar (fecha stint e o próximo registro inicia novo)."""
+    """Cria 'Stint' com base em Lap Tm > limiar (fecha stint)."""
     if "Stint" in df.columns:
         return df
     stn = 1
@@ -103,7 +105,33 @@ def get_filtered(df: pd.DataFrame, stint_choice, max_lap_seconds: float, is_time
         d = d[d["Lap Tm"] <= max_lap_seconds]
     return d
 
-# -------------------- App --------------------
+def annotate_box(ax, bp, ys_list, idx, color, fs, dy):
+    """Anota mediana (no meio), Q3 (acima) e Q1 (abaixo) de um boxplot."""
+    data_i = np.array(ys_list[idx], dtype=float)
+    q1 = float(np.percentile(data_i, 25))
+    q3 = float(np.percentile(data_i, 75))
+    med = float(np.median(data_i))
+
+    median_line = bp["medians"][idx]
+    median_line.set_color("black")
+    median_line.set_linewidth(2.0)
+    x_mid = float(np.mean(median_line.get_xdata()))
+    y_med = float(np.mean(median_line.get_ydata()))
+
+    # Mediana (no meio da linha)
+    ax.text(x_mid, y_med, f"{med:.3f}", fontsize=fs, va="center", ha="center",
+            color="black", bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.5, linewidth=0),
+            clip_on=True, zorder=5)
+    # Q3 (acima do topo do box)
+    ax.text(x_mid, q3 + dy, f"{q3:.3f}", fontsize=fs, va="bottom", ha="center",
+            color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
+            clip_on=True, zorder=5)
+    # Q1 (abaixo da base do box)
+    ax.text(x_mid, q1 - dy, f"{q1:.3f}", fontsize=fs, va="top", ha="center",
+            color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
+            clip_on=True, zorder=5)
+
+# ==================== App ====================
 def main():
     st.title("📊 Análise Estatística Endurance")
 
@@ -114,11 +142,12 @@ def main():
 
     sheets = load_excel(uploaded)
 
-    # Remover SEMPRE a última aba
+    # Remove SEMPRE a última aba
     if len(sheets) >= 1:
         last_key = list(sheets.keys())[-1]
         del sheets[last_key]
 
+    # Pré-processamento
     sheets_missing_laptm = []
     for name in list(sheets):
         df = preprocess_df(sheets[name])
@@ -138,7 +167,7 @@ def main():
         with st.expander("Abas sem coluna de tempo de volta identificável"):
             st.write(", ".join(sheets_missing_laptm))
 
-    # ==================== BLOCO 1 (gráfico principal + estatísticas) ====================
+    # -------------------- BLOCO 1 (gráfico principal + estatísticas) --------------------
     default_p1 = [s for s in sheets if s.strip().endswith("P1")]
     sessions = st.multiselect(
         "Selecione sessões para análise",
@@ -178,6 +207,7 @@ def main():
     metric = st.selectbox("Selecione métrica", options=metric_opts, format_func=lambda x: labels_map[x])
     ylabel = labels_map[metric]
     is_time_metric = metric.lower().endswith("tm")
+
     max_lap = st.number_input("Excluir voltas com 'Lap Tm' acima de (s)", value=60.0)
 
     session_sample = {}
@@ -210,13 +240,15 @@ def main():
         series_x.append(x); series_y.append(y)
         labels.append(f"{s} ({'All' if session_stint[s]=='All' else 'Stint '+str(session_stint[s])})")
 
-    # ---- Plot do BLOCO 1 ----
+    # ---- Plot BLOCO 1 ----
     fig, ax = plt.subplots(figsize=(10, 4))
     if chart_type == "Boxplot":
         valid_pairs = [(ys, lbl) for ys, lbl in zip(series_y, labels) if len(ys) > 0]
         if not valid_pairs:
-            st.warning("Sem dados para plotar."); return
+            st.warning("Sem dados para plotar.")
+            return
         ys_list, lbls = zip(*valid_pairs)
+
         cycle = plt.rcParams.get("axes.prop_cycle", None)
         base_colors = cycle.by_key().get("color", ["C0"]) if cycle else ["C0"]
         cols = [base_colors[i % len(base_colors)] for i in range(len(lbls))]
@@ -224,6 +256,7 @@ def main():
 
         n_boxes = len(lbls); h_in = fig.get_size_inches()[1]
         fs = max(6, min(12, (10 * (h_in / 4.0)) * (8 / max(6, n_boxes))))  # 6–12 pt
+
         all_vals = np.concatenate([np.array(v, dtype=float) for v in ys_list])
         y_range = float(np.nanmax(all_vals) - np.nanmin(all_vals)) if all_vals.size else 1.0
         dy = max(0.002 * y_range, 0.0005)
@@ -233,23 +266,7 @@ def main():
             bp["whiskers"][2*i].set_color(col); bp["whiskers"][2*i + 1].set_color(col)
             bp["caps"][2*i].set_color(col); bp["caps"][2*i + 1].set_color(col)
 
-            data_i = np.array(ys_list[i], dtype=float)
-            q1 = float(np.percentile(data_i, 25)); q3 = float(np.percentile(data_i, 75))
-            med = float(np.median(data_i))
-
-            median_line = bp["medians"][i]
-            median_line.set_color("black"); median_line.set_linewidth(2.0)
-            x_mid = float(np.mean(median_line.get_xdata()))
-            y_med = float(np.mean(median_line.get_ydata()))
-            ax.text(x_mid, y_med, f"{med:.3f}", fontsize=fs, va="center", ha="center",
-                    color="black", bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.5, linewidth=0),
-                    clip_on=True, zorder=5)
-            ax.text(x_mid, q3 + dy, f"{q3:.3f}", fontsize=fs, va="bottom", ha="center",
-                    color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
-                    clip_on=True, zorder=5)
-            ax.text(x_mid, q1 - dy, f"{q1:.3f}", fontsize=fs, va="top", ha="center",
-                    color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
-                    clip_on=True, zorder=5)
+            annotate_box(ax, bp, ys_list, i, col, fs, dy)
 
         handles = [mpatches.Patch(facecolor=c, edgecolor=c, label=l) for c, l in zip(cols, lbls)]
         ax.legend(handles=handles, loc="upper right", fontsize="xx-small")
@@ -268,7 +285,7 @@ def main():
     ax.set_ylabel(ylabel)
     st.pyplot(fig, use_container_width=True)
 
-    # Estatísticas
+    # ---- Estatísticas ----
     st.header("📊 Estatísticas Descritivas por Amostragem")
     stats_frames = []
     for lbl, y in zip(labels, series_y):
@@ -280,10 +297,10 @@ def main():
     else:
         st.info("Sem dados suficientes para estatísticas descritivas.")
 
-    # ==================== BLOCO 2 (Métricas + tabela) ====================
+    # -------------------- BLOCO 2 (Métricas Avançadas por Stint) --------------------
     st.header(f"📋 Métricas Avançadas por Stint (Somente P1, Lap Tm ≤ {max_lap:.1f}s)")
     p1 = [s for s in sheets if s.strip().endswith("P1")]
-    for special in ["42 - V.FOREST - P1","22 - LANCASTER-ABRUNH(L)-MORAES","42 - V.FOREST(L)-L.FOREST-R.MAR"]:
+    for special in ["42 - V.FOREST - P1", "22 - LANCASTER-ABRUNH(L)-MORAES", "42 - V.FOREST(L)-L.FOREST-R.MAR"]:
         if special in sheets and special not in p1:
             p1.append(special)
 
@@ -298,23 +315,23 @@ def main():
             if df_grp.empty:
                 continue
 
-            I   = df_grp.nsmallest(10,"Lap Tm")["Lap Tm"].mean()
+            I   = df_grp.nsmallest(10, "Lap Tm")["Lap Tm"].mean()
             II  = df_grp["Lap Tm"].min()
             vel = df_grp["SSTRAP"].max() if "SSTRAP" in df_grp.columns else pd.NA
 
             n   = len(df_grp)
-            n30 = max(math.ceil(n*0.3),1)
+            n30 = max(math.ceil(n * 0.3), 1)
             chronological = df_grp.reset_index(drop=True)
             IV  = chronological.iloc[:n30]["Lap Tm"].mean()
             V   = chronological.iloc[-n30:]["Lap Tm"].mean()
-            VI  = pd.Series([IV,V]).mean()
+            VI  = pd.Series([IV, V]).mean()
 
             times_sorted = df_grp["Lap Tm"].sort_values().reset_index(drop=True)
-            n2 = len(times_sorted); k = int(n2*0.2)
+            n2 = len(times_sorted); k = int(n2 * 0.2)
             gauss = times_sorted.iloc[k:n2-k].mean() if n2 > 2*k else pd.NA
 
             if all(pd.notna(x) for x in [I, II, VI, gauss]):
-                GPI = (I*4 + VI*2 + gauss*2 + II*2)/10
+                GPI = (I*4 + VI*2 + gauss*2 + II*2) / 10
             else:
                 GPI = pd.NA
 
@@ -327,7 +344,7 @@ def main():
                 "MédiaIni30%":         round(IV, 3)   if pd.notna(IV)   else pd.NA,
                 "MédiaFim30%":         round(V, 3)    if pd.notna(V)    else pd.NA,
                 "MédiaIV_V":           round(VI, 3)   if pd.notna(VI)   else pd.NA,
-                "Gauss (20% trimmed)": round(gauss,3) if pd.notna(gauss) else pd.NA,
+                "Gauss (20% trimmed)": round(gauss, 3) if pd.notna(gauss) else pd.NA,
                 "GPI":                 round(GPI, 3)  if pd.notna(GPI)  else pd.NA
             })
 
@@ -339,10 +356,9 @@ def main():
         csv = dfm.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Baixar métricas (CSV)", csv, "metricas_avancadas_P1.csv", "text/csv")
 
-    # ==================== BLOCO 3 (Boxplot independente — stints por sessão) ====================
+    # -------------------- BLOCO 3 (Boxplot independente — por sessão/stint) --------------------
     st.subheader("📦 Boxplot — Seletor independente (por sessão)")
 
-    # Sessões para o boxplot independente
     all_session_names = list(sheets.keys())
     sel_sessions2 = st.multiselect(
         "Selecione sessões para análise (Boxplot)",
@@ -354,7 +370,6 @@ def main():
         st.info("Sem dados para o boxplot independente.")
         return
 
-    # Métrica independente (com base na 1ª sessão selecionada)
     first_df2 = sheets[sel_sessions2[0]]
     time_cols2 = [c for c in first_df2.columns if c.lower().endswith("tm") and c != "SSTRAP Tm"]
     metric_opts2 = list(time_cols2)
@@ -363,15 +378,15 @@ def main():
     if not metric_opts2:
         st.warning("A sessão selecionada não tem colunas de tempo (*Tm) nem 'SSTRAP'.")
         return
+
     labels_map2 = {c: c for c in metric_opts2}
     if "SSTRAP" in labels_map2:
         labels_map2["SSTRAP"] = "Velocidade Máxima (SSTRAP)"
     metric2 = st.selectbox("Selecione métrica (Boxplot)", options=metric_opts2, format_func=lambda x: labels_map2[x], key="metric_box2")
 
-    # Corte de Lap Tm
     max_lap2 = st.number_input("Excluir voltas com 'Lap Tm' acima de (s) (Boxplot)", value=float(max_lap), key="maxlap_box2")
 
-    # --- Multiselect de Stints POR sessão selecionada ---
+    # —— Multiselect de Stints POR sessão selecionada
     sel_stints_per_session = {}
     with st.container():
         st.markdown("**Selecione Stint(s) (Boxplot) por sessão:**")
@@ -381,16 +396,16 @@ def main():
                 stints_s = sorted(pd.Series(df_s["Stint"]).dropna().unique())
             else:
                 stints_s = []
-            default_stints = stints_s  # por padrão, todos
+            default_stints = stints_s
             sel = st.multiselect(
                 f"{s} — Stint(s)",
                 options=stints_s,
                 default=default_stints,
                 key=f"stints_box2_{idx}"
             )
-            sel_stints_per_session[s] = sel if sel else stints_s  # se nada marcado, usa todos
+            sel_stints_per_session[s] = sel if sel else stints_s
 
-    # Calcular máximo disponível para dimensionar slider de amostragem (com filtros aplicados)
+    # Slider de amostragem dimensionado pelo maior grupo após filtros
     max_avail2 = 0
     for s in sel_sessions2:
         df_s = sheets[s].copy()
@@ -414,7 +429,7 @@ def main():
         key="sample_box2"
     )
 
-    # Monta séries para o boxplot independente (cada (sessão, stint) vira um box)
+    # Monta séries (cada (sessão, stint) vira um box)
     ys_list2, lbls2, box_sessions2 = [], [], []
     for s in sel_sessions2:
         df_s = sheets[s].copy()
@@ -456,23 +471,19 @@ def main():
         st.info("Sem dados para o boxplot com os filtros atuais.")
         return
 
-    # Plot do boxplot independente com cores consistentes por SESSÃO
+    # Plot do boxplot independente com cores CONSISTENTES por SESSÃO
     fig2, ax2 = plt.subplots(figsize=(10, 4))
     bp2 = ax2.boxplot(ys_list2, patch_artist=True)
 
     cycle = plt.rcParams.get("axes.prop_cycle", None)
     base_colors = cycle.by_key().get("color", ["C0"]) if cycle else ["C0"]
 
-    # mapeia cada sessão a uma cor única (ordem conforme seleção do usuário)
     present_sessions_order = []
     for s in sel_sessions2:
         if s in box_sessions2 and s not in present_sessions_order:
             present_sessions_order.append(s)
-    session_to_color = {
-        s: base_colors[i % len(base_colors)] for i, s in enumerate(present_sessions_order)
-    }
+    session_to_color = {s: base_colors[i % len(base_colors)] for i, s in enumerate(present_sessions_order)}
 
-    # fonte e deslocamentos
     n_boxes2 = len(lbls2); h_in2 = fig2.get_size_inches()[1]
     fs2 = max(6, min(12, (10 * (h_in2 / 4.0)) * (8 / max(6, n_boxes2))))  # 6–12 pt
 
@@ -484,34 +495,15 @@ def main():
         sess = box_sessions2[i]
         col = session_to_color.get(sess, base_colors[0])
 
-        # aplica a MESMA cor para todos os boxes daquela sessão
         box.set_facecolor(col); box.set_edgecolor(col)
         bp2["whiskers"][2*i].set_color(col); bp2["whiskers"][2*i + 1].set_color(col)
         bp2["caps"][2*i].set_color(col); bp2["caps"][2*i + 1].set_color(col)
 
-        data_i = np.array(ys_list2[i], dtype=float)
-        q1 = float(np.percentile(data_i, 25)); q3 = float(np.percentile(data_i, 75))
-        med = float(np.median(data_i))
+        annotate_box(ax2, bp2, ys_list2, i, col, fs2, dy2)
 
-        median_line = bp2["medians"][i]
-        median_line.set_color("black"); median_line.set_linewidth(2.0)
-        x_mid = float(np.mean(median_line.get_xdata()))
-        y_med = float(np.mean(median_line.get_ydata()))
-        ax2.text(x_mid, y_med, f"{med:.3f}", fontsize=fs2, va="center", ha="center",
-                 color="black", bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.5, linewidth=0),
-                 clip_on=True, zorder=5)
-        ax2.text(x_mid, q3 + dy2, f"{q3:.3f}", fontsize=fs2, va="bottom", ha="center",
-                 color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
-                 clip_on=True, zorder=5)
-        ax2.text(x_mid, q1 - dy2, f"{q1:.3f}", fontsize=fs2, va="top", ha="center",
-                 color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
-                 clip_on=True, zorder=5)
-
-    # legenda por SESSÃO (sem duplicatas)
     handles2 = [mpatches.Patch(facecolor=session_to_color[s], edgecolor=session_to_color[s], label=s)
                 for s in present_sessions_order]
     ax2.legend(handles=handles2, loc="upper right", fontsize="xx-small")
-
     ax2.set_xticks([])
     ax2.set_xlabel("Grupos (Sessão — Stint)")
     ax2.set_ylabel(labels_map2[metric2])
@@ -519,3 +511,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
