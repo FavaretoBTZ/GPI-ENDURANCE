@@ -60,7 +60,7 @@ def coerce_numeric(series: pd.Series) -> pd.Series:
         s = str(x).strip()
         if s == "" or s.lower() in {"nan", "none"}:
             return pd.NA
-        s = re.sub(r'\.(?=\d{3}\b)', '', s)  # remove separador de milhar
+        s = re.sub(r'\.(?=\d{3}\b)', '', s)  # remove separador de milhar tipo 1.234
         s = s.replace(',', '.')              # vírgula decimal -> ponto
         try:
             return float(s)
@@ -99,7 +99,6 @@ def find_lap_time_column(df: pd.DataFrame) -> Optional[str]:
 
 @st.cache_data
 def load_excel(file) -> dict:
-    # openpyxl é necessário para .xlsx
     return pd.read_excel(file, sheet_name=None)
 
 def preprocess_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -274,7 +273,7 @@ def main():
     ylabel = labels_map[metric]
     is_time_metric = metric.lower().endswith("tm")
 
-    # Filtros por tempo (sem limites de 10s)
+    # Filtros por tempo
     min_lap = float_input("Excluir voltas com 'Lap Tm' abaixo de (s) (valor mínimo)", default=0.0, key="min_lap_main")
     max_lap = float_input("Excluir voltas com 'Lap Tm' acima de (s)", default=60.0, key="max_lap_main")
     if max_lap < min_lap:
@@ -453,11 +452,10 @@ def main():
     # ==================== Boxplot Independente ====================
     st.subheader("📦 Boxplot — Seletor independente (por sessão)")
 
-    # seletor de posição da legenda
     legend_pos = st.selectbox(
         "Posição da legenda (sessões)",
         ["Fora à direita", "Acima (em linha)", "Ocultar"],
-        index=0,
+        index=1,  # por padrão acima, como você gostou
         help="Se houver muitos carros, use 'Fora à direita' ou 'Acima (em linha)'."
     )
     legend_choice = {"Fora à direita": "right", "Acima (em linha)": "top", "Ocultar": "hide"}[legend_pos]
@@ -466,7 +464,7 @@ def main():
     sel_sessions2 = st.multiselect(
         "Selecione sessões para análise (Boxplot)",
         options=all_session_names,
-        default=default_p1[:2] if default_p1 else all_session_names[:2],
+        default=default_p1[:3] if default_p1 else all_session_names[:3],
         key="sessions_box2"
     )
     if not sel_sessions2:
@@ -585,8 +583,17 @@ def main():
         st.info("Sem dados para o boxplot com os filtros atuais.")
         return
 
-    fig2, ax2 = plt.subplots(figsize=(10, 4))
-    bp2 = ax2.boxplot(ys_list2, patch_artist=True)
+    # ===== Boxplot dimensionado + espaçamento entre grupos =====
+    gap = 1.6                                       # 1.6 dá um bom “respiro” entre boxes
+    n_groups = len(lbls2)
+    fig_w = max(14.0, 0.70 * n_groups * gap)        # largura dinâmica
+    fig_h = 6.2                                      # altura do boxplot
+
+    positions_box2 = np.arange(1, n_groups + 1, dtype=float) * gap
+    box_width = min(0.6, gap * 0.45)
+
+    fig2, ax2 = plt.subplots(figsize=(fig_w, fig_h))
+    bp2 = ax2.boxplot(ys_list2, patch_artist=True, positions=positions_box2, widths=box_width)
 
     cycle = plt.rcParams.get("axes.prop_cycle", None)
     base_colors = cycle.by_key().get("color", ["C0"]) if cycle else ["C0"]
@@ -614,11 +621,13 @@ def main():
     handles2 = [mpatches.Patch(facecolor=session_to_color[s], edgecolor=session_to_color[s], label=s)
                 for s in present_sessions_order]
 
-    _ = add_session_legend(ax2, handles2, position=legend_choice, title="Sessões", fontsize="x-small")
+    _ = add_session_legend(ax2, handles=handles2, position=legend_choice, title="Sessões", fontsize="small")
 
+    ax2.set_xlim(positions_box2[0] - gap*0.7, positions_box2[-1] + gap*0.7)
     ax2.set_xticks([])
     ax2.set_xlabel("Grupos (Sessão — Stint)")
     ax2.set_ylabel(labels_map2[metric2])
+
     apply_layout_for_legend(fig2, legend_choice)
     st.pyplot(fig2, use_container_width=True)
     plt.close(fig2)
@@ -692,33 +701,38 @@ def main():
         s = pd.Series(pd.to_numeric(y, errors="coerce")).dropna()
         means.append(float(s.mean()) if not s.empty else np.nan)
 
-    x = np.arange(1, len(lbls2) + 1, dtype=float)
-    fig3, ax3 = plt.subplots(figsize=(10, 4))
+    # ===== pontos com o MESMO espaçamento e largura do boxplot =====
+    if "positions_box2" not in locals():
+        gap = 1.6
+        n_groups = len(lbls2)
+        positions_box2 = np.arange(1, n_groups + 1, dtype=float) * gap
+        fig_w = max(14.0, 0.70 * n_groups * gap)
+        fig_h = 5.5
+    x_pos = positions_box2.copy()
+
+    fig3, ax3 = plt.subplots(figsize=(fig_w, max(5.2, fig_h - 0.7)))
 
     vals = [v for v in means if not np.isnan(v)]
     y_range = (max(vals) - min(vals)) if vals else 1.0
     dy = max(0.002 * y_range, 0.0005)
 
-    # ponto (média) por grupo, com cor da sessão correspondente + valor acima
     for i, sess in enumerate(box_sessions2):
         col = session_to_color.get(sess, "C0")
         if not np.isnan(means[i]):
-            ax3.scatter([x[i]], [means[i]], marker="o", s=60, color=col, zorder=3)
+            ax3.scatter([x_pos[i]], [means[i]], marker="o", s=70, color=col, zorder=3)
             ax3.text(
-                x[i], means[i] + dy, f"{means[i]:.3f}",
-                ha="center", va="bottom", fontsize=8, color="black",
-                bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.6, linewidth=0),
+                x_pos[i], means[i] + dy, f"{means[i]:.3f}",
+                ha="center", va="bottom", fontsize=9, color="black",
+                bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.65, linewidth=0),
                 clip_on=True, zorder=4
             )
 
-    # legenda de sessões (fora/linha/oculta)
-    _ = add_session_legend(ax3, handles=handles2, position=legend_choice, title="Sessões", fontsize="x-small")
+    _ = add_session_legend(ax3, handles=handles2, position=legend_choice, title="Sessões", fontsize="small")
 
-    # legenda de marcador (apenas 'Média'), dentro
     shape_handles = [Line2D([0], [0], marker="o", linestyle="None", label="Média")]
     ax3.legend(handles=shape_handles, loc="lower right", fontsize="x-small", title="Estatística")
 
-    ax3.set_xlim(0.5, len(x) + 0.5)
+    ax3.set_xlim(x_pos[0] - gap*0.7, x_pos[-1] + gap*0.7)
     ax3.set_xticks([])
     ax3.set_xlabel("Grupos (mesma ordem do Boxplot)")
     ax3.set_ylabel(labels_map2[metric2])
