@@ -592,23 +592,32 @@ def main():
     st.pyplot(fig2, use_container_width=True)
     plt.close(fig2)
 
-    # ===== Estatísticas (Boxplot Independente) — só Mínimo, Média e Máximo =====
-    st.subheader("📊 Estatísticas (Boxplot Independente) — Mínimo · Média · Máximo")
-    cols_min_mean_max = {}
-    for lbl, y in zip(lbls2, ys_list2):
+    # ===== Gráfico: Mínimo · Média · Máximo (mesma ordem do Boxplot Independente) =====
+    st.subheader("📈 Mínimo · Média · Máximo (mesma ordem do Boxplot Independente)")
+    mins, means, maxs = [], [], []
+    for y in ys_list2:
         s = pd.Series(pd.to_numeric(y, errors="coerce")).dropna()
-        if not s.empty:
-            cols_min_mean_max[lbl] = {
-                "Mínimo": round(float(s.min()), 3),
-                "Média":  round(float(s.mean()), 3),
-                "Máximo": round(float(s.max()), 3),
-            }
-    if cols_min_mean_max:
-        df_stats2 = pd.DataFrame(cols_min_mean_max)
-        df_stats2 = df_stats2.reindex(["Mínimo", "Média", "Máximo"])
-        st.dataframe(df_stats2, use_container_width=True)
-    else:
-        st.info("Sem dados suficientes para estatísticas no boxplot independente.")
+        if s.empty:
+            mins.append(np.nan); means.append(np.nan); maxs.append(np.nan)
+        else:
+            mins.append(float(s.min()))
+            means.append(float(s.mean()))
+            maxs.append(float(s.max()))
+
+    x = np.arange(1, len(lbls2) + 1, dtype=float)
+    fig3, ax3 = plt.subplots(figsize=(10, 4))
+    ax3.scatter(x, maxs, label="Máximo", marker="^", s=40, zorder=3)
+    ax3.scatter(x, means, label="Média",  marker="o", s=40, zorder=3)
+    ax3.scatter(x, mins, label="Mínimo", marker="v", s=40, zorder=3)
+    ax3.set_xlim(0.5, len(x) + 0.5)
+    ax3.set_xticks([])
+    ax3.set_xlabel("Grupos (mesma ordem do Boxplot)")
+    ax3.set_ylabel(labels_map2[metric2])
+    ax3.legend(loc="upper right", fontsize="x-small")
+    ax3.grid(axis="y", linestyle=":", linewidth=0.6, alpha=0.6)
+    fig3.tight_layout()
+    st.pyplot(fig3, use_container_width=True)
+    plt.close(fig3)
 
 if __name__ == "__main__":
     main()
