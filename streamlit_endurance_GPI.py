@@ -585,5 +585,27 @@ def main():
     st.pyplot(fig2, use_container_width=True)
     plt.close(fig2)
 
+# ===== Estatísticas (Boxplot Independente) — só Mínimo, Média, Máximo =====
+st.subheader("📊 Estatísticas (Boxplot Independente) — Mínimo · Média · Máximo")
+
+cols_min_mean_max = {}
+for lbl, y in zip(lbls2, ys_list2):
+    s = pd.Series(pd.to_numeric(y, errors="coerce")).dropna()
+    if not s.empty:
+        cols_min_mean_max[lbl] = {
+            "Mínimo": round(float(s.min()), 3),
+            "Média":  round(float(s.mean()), 3),
+            "Máximo": round(float(s.max()), 3),
+        }
+
+if cols_min_mean_max:
+    df_stats2 = pd.DataFrame(cols_min_mean_max)
+    # garantir a ordem das linhas
+    df_stats2 = df_stats2.reindex(["Mínimo", "Média", "Máximo"])
+    st.dataframe(df_stats2, use_container_width=True)
+else:
+    st.info("Sem dados suficientes para estatísticas no boxplot independente.")
+
+
 if __name__ == "__main__":
     main()
