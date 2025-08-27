@@ -557,61 +557,54 @@ def main():
     apply_layout_for_legend(fig2, legend_choice)
     st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
-    # ===== Gráfico de pontos: Mín · Média · Máx (cores por sessão) + valores =====
-    st.subheader("📈 Mínimo · Média · Máximo (mesma ordem do Boxplot) — cores por sessão")
-    mins, means, maxs = [], [], []
-    for y in ys_list2:
-        s = pd.Series(pd.to_numeric(y, errors="coerce")).dropna()
-        if s.empty:
-            mins.append(np.nan); means.append(np.nan); maxs.append(np.nan)
-        else:
-            mins.append(float(s.min())); means.append(float(s.mean())); maxs.append(float(s.max()))
+# ===== Gráfico de pontos: APENAS Média (cores por sessão) + valores =====
+st.subheader("📈 Média por grupo (mesma ordem do Boxplot) — cores por sessão")
 
-    x = np.arange(1, len(lbls2) + 1, dtype=float)
-    fig3, ax3 = plt.subplots(figsize=(10, 4))
+# calcula somente as médias de cada grupo do boxplot
+means = []
+for y in ys_list2:
+    s = pd.Series(pd.to_numeric(y, errors="coerce")).dropna()
+    means.append(float(s.mean()) if not s.empty else np.nan)
 
-    vals_all = [v for v in (mins + means + maxs) if not np.isnan(v)]
-    y_range = (max(vals_all) - min(vals_all)) if vals_all else 1.0
-    dy = max(0.002 * y_range, 0.0005)
+x = np.arange(1, len(lbls2) + 1, dtype=float)
+fig3, ax3 = plt.subplots(figsize=(10, 4))
 
-    for i, sess in enumerate(box_sessions2):
-        col = session_to_color.get(sess, "C0")
-        if not np.isnan(maxs[i]):
-            ax3.scatter([x[i]], [maxs[i]], marker="^", s=55, color=col, zorder=3)
-            ax3.text(x[i], maxs[i] + dy, f"{maxs[i]:.3f}", ha="center", va="bottom",
-                     fontsize=8, color="black",
-                     bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.6, linewidth=0),
-                     clip_on=True, zorder=4)
-        if not np.isnan(means[i]):
-            ax3.scatter([x[i]], [means[i]], marker="o", s=55, color=col, zorder=3)
-            ax3.text(x[i], means[i] + dy, f"{means[i]:.3f}", ha="center", va="bottom",
-                     fontsize=8, color="black",
-                     bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.6, linewidth=0),
-                     clip_on=True, zorder=4)
-        if not np.isnan(mins[i]):
-            ax3.scatter([x[i]], [mins[i]], marker="v", s=55, color=col, zorder=3)
-            ax3.text(x[i], mins[i] + dy, f"{mins[i]:.3f}", ha="center", va="bottom",
-                     fontsize=8, color="black",
-                     bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.6, linewidth=0),
-                     clip_on=True, zorder=4)
+# deslocamento para rótulo numérico
+vals = [v for v in means if not np.isnan(v)]
+y_range = (max(vals) - min(vals)) if vals else 1.0
+dy = max(0.002 * y_range, 0.0005)
 
-    # legenda de SESSÕES (fora/linha/oculta)
-    _ = add_session_legend(ax3, handles=handles2, position=legend_choice, title="Sessões", fontsize="x-small")
+# plota um ponto (média) por grupo, com cor da sessão correspondente
+for i, sess in enumerate(box_sessions2):
+    col = session_to_color.get(sess, "C0")
+    if not np.isnan(means[i]):
+        ax3.scatter([x[i]], [means[i]], marker="o", s=60, color=col, zorder=3)
+        ax3.text(
+            x[i], means[i] + dy, f"{means[i]:.3f}",
+            ha="center", va="bottom", fontsize=8, color="black",
+            bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.6, linewidth=0),
+            clip_on=True, zorder=4
+        )
 
-    # legenda de marcadores (fica dentro, no canto oposto)
-    shape_handles = [
-        Line2D([0], [0], marker="^", linestyle="None", label="Máximo"),
-        Line2D([0], [0], marker="o", linestyle="None", label="Média"),
-        Line2D([0], [0], marker="v", linestyle="None", label="Mínimo"),
-    ]
-    ax3.legend(handles=shape_handles, loc="lower right", fontsize="x-small", title="Estatística")
+# legenda de SESSÕES (fora/linha/oculta) – usa as mesmas 'handles2' do boxplot
+_ = add_session_legend(ax3, handles=handles2, position=legend_choice, title="Sessões", fontsize="x-small")
 
-    ax3.set_xlim(0.5, len(x) + 0.5); ax3.set_xticks([])
-    ax3.set_xlabel("Grupos (mesma ordem do Boxplot)"); ax3.set_ylabel(labels_map2[metric2])
-    ax3.grid(axis="y", linestyle=":", linewidth=0.6, alpha=0.6)
+# legenda do marcador (apenas 'Média') – dentro, canto oposto
+shape_handles = [Line2D([0], [0], marker="o", linestyle="None", label="Média")]
+ax3.legend(handles=shape_handles, loc="lower right", fontsize="x-small", title="Estatística")
 
-    apply_layout_for_legend(fig3, legend_choice)
-    st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+ax3.set_xlim(0.5, len(x) + 0.5)
+ax3.set_xticks([])
+ax3.set_xlabel("Grupos (mesma ordem do Boxplot)")
+ax3.set_ylabel(labels_map2[metric2])
+ax3.grid(axis="y", linestyle=":", linewidth=0.6, alpha=0.6)
+
+# reserva espaço para a legenda das sessões, se estiver fora/acima
+apply_layout_for_legend(fig3, legend_choice)
+
+st.pyplot(fig3, use_container_width=True)
+plt.close(fig3)
+
 
 if __name__ == "__main__":
     main()
