@@ -393,7 +393,10 @@ def main():
         df_s_local = df_s[pd.to_numeric(df_s["Lap Tm"], errors="coerce").notna()]
         df_s_local = df_s_local[df_s_local["Lap Tm"] >= float(min_lap)]
         for stn in sorted(pd.Series(df_s_local["Stint"]).dropna().unique()):
-            cond = (df_s_local["Stint"] == stn) & (df_s_local["Lap Tm"] <= float(max_lap)) & (df_s_local["Lap Tm"] >= float(min_lap)]
+            cond = (
+    (df_s_local["Stint"] == stn)
+    & df_s_local["Lap Tm"].between(float(min_lap), float(max_lap), inclusive="both")
+)
             df_grp = df_s_local[cond]
             if df_grp.empty:
                 continue
