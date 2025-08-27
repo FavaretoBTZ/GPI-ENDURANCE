@@ -354,7 +354,7 @@ def main():
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
 
-    # ---- Estatísticas ----
+    # ---- Estatísticas (principal) ----
     st.header("📊 Estatísticas Descritivas por Amostragem")
     stats_frames = []
     for lbl, y in zip(labels, series_y):
@@ -392,37 +392,44 @@ def main():
             continue
         df_s_local = df_s[pd.to_numeric(df_s["Lap Tm"], errors="coerce").notna()]
         df_s_local = df_s_local[df_s_local["Lap Tm"] >= float(min_lap)]
+
         for stn in sorted(pd.Series(df_s_local["Stint"]).dropna().unique()):
             cond = (
-    (df_s_local["Stint"] == stn)
-    & df_s_local["Lap Tm"].between(float(min_lap), float(max_lap), inclusive="both")
-)
+                (df_s_local["Stint"] == stn)
+                & df_s_local["Lap Tm"].between(float(min_lap), float(max_lap), inclusive="both")
+            )
             df_grp = df_s_local[cond]
             if df_grp.empty:
                 continue
+
             I   = df_grp.nsmallest(10, "Lap Tm")["Lap Tm"].mean()
             II  = df_grp["Lap Tm"].min()
             vel = df_grp["SSTRAP"].max() if "SSTRAP" in df_grp.columns else pd.NA
+
             n   = len(df_grp)
             n30 = max(math.ceil(n * 0.3), 1)
             chronological = df_grp.reset_index(drop=True)
             IV  = chronological.iloc[:n30]["Lap Tm"].mean()
             V   = chronological.iloc[-n30:]["Lap Tm"].mean()
             VI  = pd.Series([IV, V]).mean()
+
             times_sorted = df_grp["Lap Tm"].sort_values().reset_index(drop=True)
             n2 = len(times_sorted); k = int(n2 * 0.2)
             gauss = times_sorted.iloc[k:n2-k].mean() if n2 > 2*k else pd.NA
+
             GPI = (I*4 + VI*2 + gauss*2 + II*2) / 10 if all(pd.notna(x) for x in [I, II, VI, gauss]) else pd.NA
+
             rows.append({
-                "Sessão": sess, "Stint": int(stn) if pd.notna(stn) else stn,
-                "MédiaTop10": round(I,3) if pd.notna(I) else pd.NA,
-                "MinLap": round(II,3) if pd.notna(II) else pd.NA,
-                "Velocidade Máxima": round(vel,3) if pd.notna(vel) else pd.NA,
-                "MédiaIni30%": round(IV,3) if pd.notna(IV) else pd.NA,
-                "MédiaFim30%": round(V,3) if pd.notna(V) else pd.NA,
-                "MédiaIV_V": round(VI,3) if pd.notna(VI) else pd.NA,
-                "Gauss (20% trimmed)": round(gauss,3) if pd.notna(gauss) else pd.NA,
-                "GPI": round(GPI,3) if pd.notna(GPI) else pd.NA
+                "Sessão":              sess,
+                "Stint":               int(stn) if pd.notna(stn) else stn,
+                "MédiaTop10":          round(I, 3)    if pd.notna(I)    else pd.NA,
+                "MinLap":              round(II, 3)   if pd.notna(II)   else pd.NA,
+                "Velocidade Máxima":   round(vel, 3)  if pd.notna(vel)  else pd.NA,
+                "MédiaIni30%":         round(IV, 3)   if pd.notna(IV)   else pd.NA,
+                "MédiaFim30%":         round(V, 3)    if pd.notna(V)    else pd.NA,
+                "MédiaIV_V":           round(VI, 3)   if pd.notna(VI)   else pd.NA,
+                "Gauss (20% trimmed)": round(gauss, 3) if pd.notna(gauss) else pd.NA,
+                "GPI":                 round(GPI, 3)  if pd.notna(GPI)  else pd.NA
             })
     dfm = pd.DataFrame(rows)
     if dfm.empty:
@@ -585,27 +592,23 @@ def main():
     st.pyplot(fig2, use_container_width=True)
     plt.close(fig2)
 
-# ===== Estatísticas (Boxplot Independente) — só Mínimo, Média, Máximo =====
-st.subheader("📊 Estatísticas (Boxplot Independente) — Mínimo · Média · Máximo")
-
-cols_min_mean_max = {}
-for lbl, y in zip(lbls2, ys_list2):
-    s = pd.Series(pd.to_numeric(y, errors="coerce")).dropna()
-    if not s.empty:
-        cols_min_mean_max[lbl] = {
-            "Mínimo": round(float(s.min()), 3),
-            "Média":  round(float(s.mean()), 3),
-            "Máximo": round(float(s.max()), 3),
-        }
-
-if cols_min_mean_max:
-    df_stats2 = pd.DataFrame(cols_min_mean_max)
-    # garantir a ordem das linhas
-    df_stats2 = df_stats2.reindex(["Mínimo", "Média", "Máximo"])
-    st.dataframe(df_stats2, use_container_width=True)
-else:
-    st.info("Sem dados suficientes para estatísticas no boxplot independente.")
-
+    # ===== Estatísticas (Boxplot Independente) — só Mínimo, Média e Máximo =====
+    st.subheader("📊 Estatísticas (Boxplot Independente) — Mínimo · Média · Máximo")
+    cols_min_mean_max = {}
+    for lbl, y in zip(lbls2, ys_list2):
+        s = pd.Series(pd.to_numeric(y, errors="coerce")).dropna()
+        if not s.empty:
+            cols_min_mean_max[lbl] = {
+                "Mínimo": round(float(s.min()), 3),
+                "Média":  round(float(s.mean()), 3),
+                "Máximo": round(float(s.max()), 3),
+            }
+    if cols_min_mean_max:
+        df_stats2 = pd.DataFrame(cols_min_mean_max)
+        df_stats2 = df_stats2.reindex(["Mínimo", "Média", "Máximo"])
+        st.dataframe(df_stats2, use_container_width=True)
+    else:
+        st.info("Sem dados suficientes para estatísticas no boxplot independente.")
 
 if __name__ == "__main__":
     main()
