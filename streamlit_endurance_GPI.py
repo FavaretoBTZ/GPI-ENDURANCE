@@ -28,8 +28,8 @@ def coerce_numeric(series: pd.Series) -> pd.Series:
         s = str(x).strip()
         if s == "" or s.lower() in {"nan", "none"}:
             return pd.NA
-        s = re.sub(r'\.(?=\d{3}\b)', '', s)  # remove milhar "1.234"
-        s = s.replace(',', '.')              # vírgula decimal -> ponto
+        s = re.sub(r'\.(?=\d{3}\b)', '', s)   # remove milhar "1.234"
+        s = s.replace(',', '.')               # vírgula decimal -> ponto
         try:
             return float(s)
         except:
@@ -130,11 +130,16 @@ def float_input(label: str, default: float, min_value: float = 0.0, max_value: f
     val = max(min_value, min(max_value, val))
     return float(val)
 
+# --------- Anotação do boxplot (Q1/Mediana/Q3 + Máx/Mín) ---------
 def annotate_box(ax, bp, ys_list, idx, color, fs, dy):
     data_i = np.array(ys_list[idx], dtype=float)
     q1 = float(np.percentile(data_i, 25))
     q3 = float(np.percentile(data_i, 75))
     med = float(np.median(data_i))
+    y_min = float(np.min(data_i))
+    y_max = float(np.max(data_i))
+
+    # mediana
     median_line = bp["medians"][idx]
     median_line.set_color("black"); median_line.set_linewidth(2.0)
     x_mid = float(np.mean(median_line.get_xdata()))
@@ -142,10 +147,20 @@ def annotate_box(ax, bp, ys_list, idx, color, fs, dy):
     ax.text(x_mid, y_med, f"{med:.3f}", fontsize=fs, va="center", ha="center",
             color="black", bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
+
+    # Q3 e Q1
     ax.text(x_mid, q3 + dy, f"{q3:.3f}", fontsize=fs, va="bottom", ha="center",
             color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
     ax.text(x_mid, q1 - dy, f"{q1:.3f}", fontsize=fs, va="top", ha="center",
+            color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
+            clip_on=True, zorder=5)
+
+    # Maior valor Y (máximo) e Menor valor Y (mínimo)
+    ax.text(x_mid, y_max + 2*dy, f"{y_max:.3f}", fontsize=fs, va="bottom", ha="center",
+            color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
+            clip_on=True, zorder=5)
+    ax.text(x_mid, y_min - 2*dy, f"{y_min:.3f}", fontsize=fs, va="top", ha="center",
             color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
 
@@ -421,24 +436,23 @@ def main():
     metric2 = st.selectbox("Selecione métrica (Boxplot)", options=metric_opts2,
                            format_func=lambda x: labels_map2[x], key="metric_box2")
 
-    # <<< alterações pedidas: rótulo idêntico ao do bloco principal >>>
+    # mesmos rótulos (mín/máx)
     min_lap2 = float_input("Excluir voltas com 'Lap Tm' abaixo de (s) (valor mínimo)", default=min_lap, key="minlap_box2")
     max_lap2 = float_input("Excluir voltas com 'Lap Tm' acima de (s)", default=max_lap, key="maxlap_box2")
     if max_lap2 < min_lap2:
         st.warning("No Boxplot, o máximo não pode ser menor que o mínimo. Ajustei o máximo para ficar igual ao mínimo.")
         max_lap2 = float(min_lap2)
 
-    # stints por sessão
     sel_stints_per_session = {}
     with st.container():
         st.markdown("**Selecione Stint(s) (Boxplot) por sessão:**")
-        for idx, s in enumerate(sel_sessions2):
+        for idx, s in enumerate(sel_sessions2:
+            ):
             df_s = sheets[s]
             stints_s = sorted(pd.Series(df_s["Stint"]).dropna().unique()) if "Stint" in df_s.columns else []
             sel = st.multiselect(f"{s} — Stint(s)", options=stints_s, default=stints_s, key=f"stints_box2_{idx}")
             sel_stints_per_session[s] = sel if sel else stints_s
 
-    # maior disponibilidade após filtros
     max_avail2 = 0
     for s in sel_sessions2:
         df_s = sheets[s].copy()
@@ -453,7 +467,6 @@ def main():
             avail = len(df_s if (stn is None or "Stint" not in df_s.columns) else df_s[df_s["Stint"] == stn])
             max_avail2 = max(max_avail2, int(avail))
 
-    # amostragem do boxplot (robusto)
     if max_avail2 <= 0:
         sample2 = 0
         st.text("Amostragem (voltas mais rápidas) (Boxplot): 0 (sem dados após filtros)")
@@ -473,7 +486,6 @@ def main():
             min_value=min_v2, max_value=max_v2, value=cur2, step=1, key=key_box
         )
 
-    # séries para o boxplot
     ys_list2, lbls2, box_sessions2 = [], [], []
     for s in sel_sessions2:
         df_s = sheets[s].copy()
@@ -510,8 +522,7 @@ def main():
     st.divider()
     st.markdown("#### 📊 Boxplot (Independente por sessão/stint)")
     if not ys_list2:
-        st.info("Sem dados para o boxplot com os filtros atuais.")
-        return
+        st.info("Sem dados para o boxplot com os filtros atuais."); return
 
     fig2, ax2 = plt.subplots(figsize=(10, 4))
     bp2 = ax2.boxplot(ys_list2, patch_artist=True)
