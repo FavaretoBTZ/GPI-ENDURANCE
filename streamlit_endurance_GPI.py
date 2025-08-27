@@ -122,7 +122,6 @@ def get_filtered(df: pd.DataFrame, stint_choice, min_lap_seconds, max_lap_second
         d = d[d["Stint"] == stint_choice]
     if is_time_metric and "Lap Tm" in d.columns:
         d = d[pd.to_numeric(d["Lap Tm"], errors="coerce").notna()]
-        # mínimo SEMPRE aplicado (0 desativa na prática)
         d = d[d["Lap Tm"] >= float(min_lap_seconds)]
         d = d[d["Lap Tm"] <= float(max_lap_seconds)]
     return d
@@ -231,9 +230,18 @@ def main():
     ylabel = labels_map[metric]
     is_time_metric = metric.lower().endswith("tm")
 
-    # ---- NOVO: filtros mínimo e máximo (sem checkbox) ----
-    min_lap = st.number_input("Excluir voltas com 'Lap Tm' abaixo de (s) (valor mínimo)", value=0.0, key="min_lap_main")
-    max_lap = st.number_input("Excluir voltas com 'Lap Tm' acima de (s)", value=60.0)
+    # ---- NOVO: filtros mínimo e máximo com limites amplos ----
+    min_lap = st.number_input(
+        "Excluir voltas com 'Lap Tm' abaixo de (s) (valor mínimo)",
+        min_value=0.0, max_value=100000.0, value=0.0, step=0.01, format="%.2f", key="min_lap_main"
+    )
+    max_lap = st.number_input(
+        "Excluir voltas com 'Lap Tm' acima de (s)",
+        min_value=0.0, max_value=100000.0, value=60.0, step=0.01, format="%.2f", key="max_lap_main"
+    )
+    if max_lap < min_lap:
+        st.warning("O máximo não pode ser menor que o mínimo. Ajustei o máximo para ficar igual ao mínimo.")
+        max_lap = float(min_lap)
 
     # Sliders de amostragem por sessão
     session_sample = {}
@@ -430,11 +438,18 @@ def main():
         labels_map2["SSTRAP"] = "Velocidade Máxima (SSTRAP)"
     metric2 = st.selectbox("Selecione métrica (Boxplot)", options=metric_opts2, format_func=lambda x: labels_map2[x], key="metric_box2")
 
-    # ---- NOVO: mínimo e máximo SEM checkbox (Boxplot) ----
-    min_lap2 = st.number_input("Excluir voltas com 'Lap Tm' abaixo de (s) (Boxplot)",
-                               value=float(min_lap), key="minlap_box2")
-    max_lap2 = st.number_input("Excluir voltas com 'Lap Tm' acima de (s) (Boxplot)",
-                               value=float(max_lap), key="maxlap_box2")
+    # ---- NOVO: mínimo e máximo com limites amplos (Boxplot) ----
+    min_lap2 = st.number_input(
+        "Excluir voltas com 'Lap Tm' abaixo de (s) (Boxplot)",
+        min_value=0.0, max_value=100000.0, value=float(min_lap), step=0.01, format="%.2f", key="minlap_box2"
+    )
+    max_lap2 = st.number_input(
+        "Excluir voltas com 'Lap Tm' acima de (s) (Boxplot)",
+        min_value=0.0, max_value=100000.0, value=float(max_lap), step=0.01, format="%.2f", key="maxlap_box2"
+    )
+    if max_lap2 < min_lap2:
+        st.warning("No Boxplot, o máximo não pode ser menor que o mínimo. Ajustei o máximo para ficar igual ao mínimo.")
+        max_lap2 = float(min_lap2)
 
     # —— Multiselect de Stints POR sessão selecionada
     sel_stints_per_session = {}
