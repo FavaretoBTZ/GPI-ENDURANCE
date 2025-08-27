@@ -126,8 +126,47 @@ def get_filtered(df: pd.DataFrame, stint_choice, min_lap_seconds, max_lap_second
         d = d[d["Lap Tm"] <= float(max_lap_seconds)]
     return d
 
+# -------- Entrada de float que aceita vírgula ou ponto --------
+def parse_float_any(s: str) -> Optional[float]:
+    """Aceita '10,5', '10.5', '1.234,56', '1,234.56' etc. Retorna float ou None se vazio."""
+    if s is None:
+        return None
+    txt = str(s).strip().replace(" ", "")
+    if txt == "":
+        return None
+    # Se tem os dois separadores, considera o último como decimal
+    if "," in txt and "." in txt:
+        last_comma = txt.rfind(",")
+        last_dot = txt.rfind(".")
+        if last_comma > last_dot:
+            # milhar = ponto, decimal = vírgula
+            txt = txt.replace(".", "")
+            txt = txt.replace(",", ".")
+        else:
+            # milhar = vírgula, decimal = ponto
+            txt = txt.replace(",", "")
+    else:
+        # Só vírgula -> decimal
+        if "," in txt:
+            txt = txt.replace(",", ".")
+        # Só ponto -> já está certo
+    try:
+        return float(txt)
+    except:
+        return None
+
+def float_input(label: str, default: float, min_value: float = 0.0, max_value: float = 1e9, key: str = None) -> float:
+    """Text input que aceita vírgula/ponto e limita min/max."""
+    raw = st.text_input(label, value=str(default).replace(".", ","), key=key)
+    val = parse_float_any(raw)
+    if val is None:
+        st.caption("↳ Valor vazio/ inválido: usando padrão.")
+        val = default
+    val = max(min_value, min(max_value, val))
+    return float(val)
+
 def annotate_box(ax, bp, ys_list, idx, color, fs, dy):
-    """Anota mediana (no meio), Q3 (acima) e Q1 (abaixo) de um boxplot."""
+    """Anota mediana, Q3 e Q1 de um boxplot."""
     data_i = np.array(ys_list[idx], dtype=float)
     q1 = float(np.percentile(data_i, 25))
     q3 = float(np.percentile(data_i, 75))
@@ -139,15 +178,12 @@ def annotate_box(ax, bp, ys_list, idx, color, fs, dy):
     x_mid = float(np.mean(median_line.get_xdata()))
     y_med = float(np.mean(median_line.get_ydata()))
 
-    # Mediana (no meio da linha)
     ax.text(x_mid, y_med, f"{med:.3f}", fontsize=fs, va="center", ha="center",
             color="black", bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
-    # Q3 (acima do topo do box)
     ax.text(x_mid, q3 + dy, f"{q3:.3f}", fontsize=fs, va="bottom", ha="center",
             color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
-    # Q1 (abaixo da base do box)
     ax.text(x_mid, q1 - dy, f"{q1:.3f}", fontsize=fs, va="top", ha="center",
             color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
@@ -163,7 +199,7 @@ def main():
 
     sheets = load_excel(uploaded)
 
-    # Opção para remover a última aba (em vez de sempre remover)
+    # Opção para remover a última aba
     remove_last_sheet = st.checkbox("Remover última aba da planilha", value=True)
     if remove_last_sheet and len(sheets) >= 1:
         last_key = list(sheets.keys())[-1]
@@ -230,15 +266,9 @@ def main():
     ylabel = labels_map[metric]
     is_time_metric = metric.lower().endswith("tm")
 
-    # ---- NOVO: filtros mínimo e máximo com limites amplos ----
-    min_lap = st.number_input(
-        "Excluir voltas com 'Lap Tm' abaixo de (s) (valor mínimo)",
-        min_value=0.0, max_value=100000.0, value=0.0, step=0.01, format="%.2f", key="min_lap_main"
-    )
-    max_lap = st.number_input(
-        "Excluir voltas com 'Lap Tm' acima de (s)",
-        min_value=0.0, max_value=100000.0, value=60.0, step=0.01, format="%.2f", key="max_lap_main"
-    )
+    # ---- NOVO: mínimo e máximo aceitando vírgula/ponto ----
+    min_lap = float_input("Excluir voltas com 'Lap Tm' abaixo de (s) (valor mínimo)", default=0.0, key="min_lap_main")
+    max_lap = float_input("Excluir voltas com 'Lap Tm' acima de (s)", default=60.0, key="max_lap_main")
     if max_lap < min_lap:
         st.warning("O máximo não pode ser menor que o mínimo. Ajustei o máximo para ficar igual ao mínimo.")
         max_lap = float(min_lap)
@@ -438,15 +468,9 @@ def main():
         labels_map2["SSTRAP"] = "Velocidade Máxima (SSTRAP)"
     metric2 = st.selectbox("Selecione métrica (Boxplot)", options=metric_opts2, format_func=lambda x: labels_map2[x], key="metric_box2")
 
-    # ---- NOVO: mínimo e máximo com limites amplos (Boxplot) ----
-    min_lap2 = st.number_input(
-        "Excluir voltas com 'Lap Tm' abaixo de (s) (Boxplot)",
-        min_value=0.0, max_value=100000.0, value=float(min_lap), step=0.01, format="%.2f", key="minlap_box2"
-    )
-    max_lap2 = st.number_input(
-        "Excluir voltas com 'Lap Tm' acima de (s) (Boxplot)",
-        min_value=0.0, max_value=100000.0, value=float(max_lap), step=0.01, format="%.2f", key="maxlap_box2"
-    )
+    # ---- mínimo e máximo aceitando vírgula/ponto (Boxplot) ----
+    min_lap2 = float_input("Excluir voltas com 'Lap Tm' abaixo de (s) (Boxplot)", default=min_lap, key="minlap_box2")
+    max_lap2 = float_input("Excluir voltas com 'Lap Tm' acima de (s) (Boxplot)", default=max_lap, key="maxlap_box2")
     if max_lap2 < min_lap2:
         st.warning("No Boxplot, o máximo não pode ser menor que o mínimo. Ajustei o máximo para ficar igual ao mínimo.")
         max_lap2 = float(min_lap2)
