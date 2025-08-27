@@ -8,12 +8,10 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-# ==================== Config geral ====================
 st.set_page_config(page_title="📊 Análise Estatística Endurance", layout="wide")
 
-# ==================== Utils ====================
+# ---------- Utils ----------
 def time_to_seconds(t):
-    """Converte 'M:SS.mmm' ou string numérica para segundos; retorna NaN se não parsear."""
     try:
         ts = str(t).replace(',', '.').strip()
         if ts == "" or ts.lower() in {"nan", "none"}:
@@ -26,7 +24,6 @@ def time_to_seconds(t):
         return pd.NA
 
 def coerce_numeric(series: pd.Series) -> pd.Series:
-    """Converte para float lidando com separador de milhar e vírgula decimal."""
     def smart_to_float(x):
         s = str(x).strip()
         if s == "" or s.lower() in {"nan", "none"}:
@@ -40,7 +37,6 @@ def coerce_numeric(series: pd.Series) -> pd.Series:
     return series.apply(smart_to_float)
 
 def find_lap_column(df: pd.DataFrame) -> str:
-    """Tenta localizar a coluna de número de volta. Retorna/garante 'Lap'."""
     candidates = [c for c in df.columns if c.strip().lower() in {"lap", "leadlap", "lap #", "#lap"}]
     if candidates:
         if "Lap" not in df.columns:
@@ -51,18 +47,15 @@ def find_lap_column(df: pd.DataFrame) -> str:
     return "Lap"
 
 def find_lap_time_column(df: pd.DataFrame) -> Optional[str]:
-    """Descobre a coluna de tempo de volta; retorna o nome original ou None."""
     exacts = [
         "Lap Tm","LapTm","Lap Time","LapTime","Lap_Time","Best Lap Tm","Best Lap",
         "Lap Time (s)","LapTime(s)","LAP_TM","LAP_TIME"
     ]
     for c in exacts:
-        if c in df.columns:
-            return c
+        if c in df.columns: return c
     for c in df.columns:
         cl = c.lower().replace(" ", "").replace("_","")
-        if "lap" in cl and ("tm" in cl or "time" in cl):
-            return c
+        if "lap" in cl and ("tm" in cl or "time" in cl): return c
     best, score = None, 0.0
     for c in df.columns:
         conv = df[c].apply(time_to_seconds)
@@ -77,7 +70,6 @@ def load_excel(file) -> dict:
     return pd.read_excel(file, sheet_name=None)
 
 def preprocess_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Converte *Tm* em seg; tenta numérico no resto quando fizer sentido."""
     out = df.copy()
     if "SSTRAP Tm" in out.columns and "SSTRAP" not in out.columns:
         out["SSTRAP"] = coerce_numeric(out["SSTRAP Tm"])
@@ -94,21 +86,14 @@ def preprocess_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def derive_stints(df: pd.DataFrame, lap_time_col: str, threshold: float = 300.0) -> pd.DataFrame:
-    """Cria 'Stint' com base em Lap Tm > limiar (fecha stint)."""
-    if "Stint" in df.columns:
-        return df
-    stn = 1
-    stints = []
+    if "Stint" in df.columns: return df
+    stn, stints = 1, []
     for t in df[lap_time_col].fillna(threshold + 1):
         stints.append(stn)
-        if t > threshold:
-            stn += 1
-    out = df.copy()
-    out["Stint"] = stints
-    return out
+        if t > threshold: stn += 1
+    out = df.copy(); out["Stint"] = stints; return out
 
 def get_filtered(df: pd.DataFrame, stint_choice, min_lap_seconds, max_lap_seconds, is_time_metric: bool) -> pd.DataFrame:
-    """Aplica filtros por Stint e faixa (min/max) de Lap Tm quando métrica é de tempo."""
     d = df.copy()
     if stint_choice != "All":
         d = d[d["Stint"] == stint_choice]
@@ -118,22 +103,19 @@ def get_filtered(df: pd.DataFrame, stint_choice, min_lap_seconds, max_lap_second
         d = d[d["Lap Tm"] <= float(max_lap_seconds)]
     return d
 
-# -------- Entrada de float que aceita vírgula ou ponto --------
+# ----- float_input: aceita vírgula/ponto -----
 def parse_float_any(s: str) -> Optional[float]:
-    if s is None:
-        return None
+    if s is None: return None
     txt = str(s).strip().replace(" ", "")
-    if txt == "":
-        return None
+    if txt == "": return None
     if "," in txt and "." in txt:
-        last_comma = txt.rfind(","); last_dot = txt.rfind(".")
-        if last_comma > last_dot:  # milhar = ponto, decimal = vírgula
+        last_comma, last_dot = txt.rfind(","), txt.rfind(".")
+        if last_comma > last_dot:
             txt = txt.replace(".", "").replace(",", ".")
-        else:                       # milhar = vírgula, decimal = ponto
+        else:
             txt = txt.replace(",", "")
     else:
-        if "," in txt:
-            txt = txt.replace(",", ".")
+        if "," in txt: txt = txt.replace(",", ".")
     try:
         return float(txt)
     except:
@@ -167,7 +149,7 @@ def annotate_box(ax, bp, ys_list, idx, color, fs, dy):
             color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
 
-# ==================== App ====================
+# ---------- App ----------
 def main():
     st.title("📊 Análise Estatística Endurance")
 
@@ -183,7 +165,6 @@ def main():
         last_key = list(sheets.keys())[-1]
         del sheets[last_key]
 
-    # Pré-processamento
     sheets_missing_laptm = []
     for name in list(sheets):
         df = preprocess_df(sheets[name])
@@ -203,7 +184,7 @@ def main():
         with st.expander("Abas sem coluna de tempo de volta identificável"):
             st.write(", ".join(sheets_missing_laptm))
 
-    # -------------------- BLOCO 1 --------------------
+    # ---- Seleção de sessões ----
     default_p1 = [s for s in sheets if s.strip().endswith("P1")]
     sessions = st.multiselect(
         "Selecione sessões para análise",
@@ -211,7 +192,7 @@ def main():
         default=default_p1[:3] if default_p1 else list(sheets.keys())[:3]
     )
     if not sessions:
-        st.warning("Selecione ao menos uma aba (ex.: ‘- P1’).")
+        st.warning("Selecione ao menos uma aba.")
         return
 
     session_stint = {}
@@ -237,59 +218,61 @@ def main():
         return
 
     labels_map = {c: c for c in metric_opts}
-    if "SSTRAP" in labels_map:
-        labels_map["SSTRAP"] = "Velocidade Máxima (SSTRAP)"
+    if "SSTRAP" in labels_map: labels_map["SSTRAP"] = "Velocidade Máxima (SSTRAP)"
 
     metric = st.selectbox("Selecione métrica", options=metric_opts, format_func=lambda x: labels_map[x])
     ylabel = labels_map[metric]
     is_time_metric = metric.lower().endswith("tm")
 
-    # ---- mínimo e máximo aceitando vírgula/ponto ----
+    # ---- Filtros min/max aceitando vírgula ou ponto ----
     min_lap = float_input("Excluir voltas com 'Lap Tm' abaixo de (s) (valor mínimo)", default=0.0, key="min_lap_main")
     max_lap = float_input("Excluir voltas com 'Lap Tm' acima de (s)", default=60.0, key="max_lap_main")
     if max_lap < min_lap:
         st.warning("O máximo não pode ser menor que o mínimo. Ajustei o máximo para ficar igual ao mínimo.")
         max_lap = float(min_lap)
 
-    # Sliders de amostragem por sessão (com proteção de faixa)
+    # ---- Sliders por sessão (com proteção de faixa e de 'len==0') ----
     session_sample = {}
     filtered_exports = {}
 
     for s in sessions:
         df_f = get_filtered(sheets[s], session_stint[s], min_lap, max_lap, is_time_metric)
-        avail = len(df_f)
+        avail = int(len(df_f))
 
         key = f"sample_{s}"
-        min_v = 1
-        max_v = max(1, avail)
-        default_v = min(30, max_v)
-
-        # aperta valor salvo para caber no novo intervalo
-        if key in st.session_state:
-            try:
-                cur = int(st.session_state[key])
-            except Exception:
-                cur = default_v
-            st.session_state[key] = max(min_v, min(max_v, cur))
+        if avail == 0:
+            min_v, max_v, default_v = 0, 0, 0
         else:
-            st.session_state[key] = default_v
+            min_v, max_v, default_v = 1, avail, min(30, avail)
+
+        cur = int(st.session_state.get(key, default_v) or default_v)
+        cur = max(min_v, min(max_v, cur))
+        st.session_state[key] = cur
 
         session_sample[s] = st.slider(
             f"Amostragem (voltas mais rápidas) em '{s}'",
-            min_value=min_v, max_value=max_v, value=st.session_state[key], key=key
+            min_value=min_v, max_value=max_v, value=cur, step=1, key=key
         )
 
+    # ---- Construção das séries ----
     series_x, series_y, labels = [], [], []
     for s in sessions:
         df_f = get_filtered(sheets[s], session_stint[s], min_lap, max_lap, is_time_metric)
         if metric not in df_f.columns:
             st.warning(f"'{metric}' não encontrado em {s}. Pulando.")
             continue
-        df_sel = df_f.nsmallest(session_sample[s], metric)
+
+        n_take = int(session_sample[s])
+        if n_take == 0 or len(df_f) == 0:
+            df_sel = df_f.head(0)
+        else:
+            n_take = min(n_take, len(df_f))
+            df_sel = df_f.nsmallest(n_take, metric)
+
         filtered_exports[s] = df_sel.copy()
 
-        lap_col = find_lap_column(df_sel)
-        if x_axis_mode == "Lap":
+        lap_col = find_lap_column(df_sel) if not df_sel.empty else "Lap"
+        if x_axis_mode == "Lap" and not df_sel.empty:
             df_sel = df_sel.sort_values(lap_col)
             x = df_sel[lap_col].tolist()
             y = pd.to_numeric(df_sel[metric], errors="coerce").tolist()
@@ -305,15 +288,14 @@ def main():
     if chart_type == "Boxplot":
         valid_pairs = [(ys, lbl) for ys, lbl in zip(series_y, labels) if len(ys) > 0]
         if not valid_pairs:
-            st.warning("Sem dados para plotar.")
-            return
+            st.warning("Sem dados para plotar."); return
         ys_list, lbls = zip(*valid_pairs)
         cycle = plt.rcParams.get("axes.prop_cycle", None)
         base_colors = cycle.by_key().get("color", ["C0"]) if cycle else ["C0"]
         cols = [base_colors[i % len(base_colors)] for i in range(len(lbls))]
         bp = ax.boxplot(ys_list, patch_artist=True)
         n_boxes = len(lbls); h_in = fig.get_size_inches()[1]
-        fs = max(6, min(12, (10 * (h_in / 4.0)) * (8 / max(6, n_boxes))))  # 6–12 pt
+        fs = max(6, min(12, (10 * (h_in / 4.0)) * (8 / max(6, n_boxes))))
         all_vals = np.concatenate([np.array(v, dtype=float) for v in ys_list])
         y_range = float(np.nanmax(all_vals) - np.nanmin(all_vals)) if all_vals.size else 1.0
         dy = max(0.002 * y_range, 0.0005)
@@ -335,9 +317,7 @@ def main():
         ax.legend(loc="upper right", fontsize="xx-small")
     ax.set_xlabel("Lap" if x_axis_mode == "Lap" else "Amostra")
     ax.set_ylabel(ylabel)
-    fig.tight_layout()
-    st.pyplot(fig, use_container_width=True)
-    plt.close(fig)
+    fig.tight_layout(); st.pyplot(fig, use_container_width=True); plt.close(fig)
 
     # ---- Estatísticas ----
     st.header("📊 Estatísticas Descritivas por Amostragem")
@@ -351,7 +331,7 @@ def main():
     else:
         st.info("Sem dados suficientes para estatísticas descritivas.")
 
-    # ---- Download dados filtrados ----
+    # ---- Download por sessão ----
     st.subheader("⬇️ Baixar dados filtrados (por sessão)")
     for s in sessions:
         if s in filtered_exports and not filtered_exports[s].empty:
@@ -363,30 +343,26 @@ def main():
                 key=f"dl_{s}"
             )
 
-    # -------------------- BLOCO 2 (Métricas Avançadas por Stint) --------------------
+    # ---- Métricas por Stint ----
     st.header(f"📋 Métricas Avançadas por Stint (Somente P1, Lap Tm entre {float(min_lap):.1f}s e {max_lap:.1f}s)")
     p1 = [s for s in sheets if s.strip().endswith("P1")]
     for special in ["42 - V.FOREST - P1", "22 - LANCASTER-ABRUNH(L)-MORAES", "42 - V.FOREST(L)-L.FOREST-R.MAR"]:
-        if special in sheets and special not in p1:
-            p1.append(special)
+        if special in sheets and special not in p1: p1.append(special)
 
     rows = []
     for sess in p1:
         df_s = sheets[sess]
-        if "Lap Tm" not in df_s.columns:
-            continue
+        if "Lap Tm" not in df_s.columns: continue
         df_s_local = df_s[pd.to_numeric(df_s["Lap Tm"], errors="coerce").notna()]
         df_s_local = df_s_local[df_s_local["Lap Tm"] >= float(min_lap)]
         for stn in sorted(pd.Series(df_s_local["Stint"]).dropna().unique()):
             cond = (df_s_local["Stint"] == stn) & (df_s_local["Lap Tm"] <= float(max_lap)) & (df_s_local["Lap Tm"] >= float(min_lap))
             df_grp = df_s_local[cond]
-            if df_grp.empty:
-                continue
+            if df_grp.empty: continue
             I   = df_grp.nsmallest(10, "Lap Tm")["Lap Tm"].mean()
             II  = df_grp["Lap Tm"].min()
             vel = df_grp["SSTRAP"].max() if "SSTRAP" in df_grp.columns else pd.NA
-            n   = len(df_grp)
-            n30 = max(math.ceil(n * 0.3), 1)
+            n   = len(df_grp); n30 = max(math.ceil(n * 0.3), 1)
             chronological = df_grp.reset_index(drop=True)
             IV  = chronological.iloc[:n30]["Lap Tm"].mean()
             V   = chronological.iloc[-n30:]["Lap Tm"].mean()
@@ -394,31 +370,28 @@ def main():
             times_sorted = df_grp["Lap Tm"].sort_values().reset_index(drop=True)
             n2 = len(times_sorted); k = int(n2 * 0.2)
             gauss = times_sorted.iloc[k:n2-k].mean() if n2 > 2*k else pd.NA
-            if all(pd.notna(x) for x in [I, II, VI, gauss]):
-                GPI = (I*4 + VI*2 + gauss*2 + II*2) / 10
-            else:
-                GPI = pd.NA
+            GPI = (I*4 + VI*2 + gauss*2 + II*2) / 10 if all(pd.notna(x) for x in [I, II, VI, gauss]) else pd.NA
             rows.append({
-                "Sessão":              sess,
-                "Stint":               int(stn) if pd.notna(stn) else stn,
-                "MédiaTop10":          round(I, 3)    if pd.notna(I)    else pd.NA,
-                "MinLap":              round(II, 3)   if pd.notna(II)   else pd.NA,
-                "Velocidade Máxima":   round(vel, 3)  if pd.notna(vel)  else pd.NA,
-                "MédiaIni30%":         round(IV, 3)   if pd.notna(IV)   else pd.NA,
-                "MédiaFim30%":         round(V, 3)    if pd.notna(V)    else pd.NA,
-                "MédiaIV_V":           round(VI, 3)   if pd.notna(VI)   else pd.NA,
-                "Gauss (20% trimmed)": round(gauss, 3) if pd.notna(gauss) else pd.NA,
-                "GPI":                 round(GPI, 3)  if pd.notna(GPI)  else pd.NA
+                "Sessão": sess, "Stint": int(stn) if pd.notna(stn) else stn,
+                "MédiaTop10": round(I,3) if pd.notna(I) else pd.NA,
+                "MinLap": round(II,3) if pd.notna(II) else pd.NA,
+                "Velocidade Máxima": round(vel,3) if pd.notna(vel) else pd.NA,
+                "MédiaIni30%": round(IV,3) if pd.notna(IV) else pd.NA,
+                "MédiaFim30%": round(V,3) if pd.notna(V) else pd.NA,
+                "MédiaIV_V": round(VI,3) if pd.notna(VI) else pd.NA,
+                "Gauss (20% trimmed)": round(gauss,3) if pd.notna(gauss) else pd.NA,
+                "GPI": round(GPI,3) if pd.notna(GPI) else pd.NA
             })
     dfm = pd.DataFrame(rows)
     if dfm.empty:
         st.warning("Nenhuma métrica avançada calculada.")
     else:
         st.dataframe(dfm, use_container_width=True)
-        csv = dfm.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Baixar métricas (CSV)", csv, "metricas_avancadas_P1.csv", "text/csv")
+        st.download_button("⬇️ Baixar métricas (CSV)",
+                           dfm.to_csv(index=False).encode("utf-8"),
+                           "metricas_avancadas_P1.csv", "text/csv")
 
-    # -------------------- BLOCO 3 (Boxplot independente) --------------------
+    # ---- Boxplot independente ----
     st.subheader("📦 Boxplot — Seletor independente (por sessão)")
     all_session_names = list(sheets.keys())
     sel_sessions2 = st.multiselect(
@@ -428,31 +401,26 @@ def main():
         key="sessions_box2"
     )
     if not sel_sessions2:
-        st.info("Sem dados para o boxplot independente.")
-        return
+        st.info("Sem dados para o boxplot independente."); return
 
     first_df2 = sheets[sel_sessions2[0]]
     time_cols2 = [c for c in first_df2.columns if c.lower().endswith("tm") and c != "SSTRAP Tm"]
     metric_opts2 = list(time_cols2)
-    if "SSTRAP" in first_df2.columns:
-        metric_opts2 += ["SSTRAP"]
+    if "SSTRAP" in first_df2.columns: metric_opts2 += ["SSTRAP"]
     if not metric_opts2:
-        st.warning("A sessão selecionada não tem colunas de tempo (*Tm) nem 'SSTRAP'.")
-        return
+        st.warning("A sessão selecionada não tem colunas de tempo (*Tm) nem 'SSTRAP'."); return
 
     labels_map2 = {c: c for c in metric_opts2}
-    if "SSTRAP" in labels_map2:
-        labels_map2["SSTRAP"] = "Velocidade Máxima (SSTRAP)"
-    metric2 = st.selectbox("Selecione métrica (Boxplot)", options=metric_opts2, format_func=lambda x: labels_map2[x], key="metric_box2")
+    if "SSTRAP" in labels_map2: labels_map2["SSTRAP"] = "Velocidade Máxima (SSTRAP)"
+    metric2 = st.selectbox("Selecione métrica (Boxplot)", options=metric_opts2,
+                           format_func=lambda x: labels_map2[x], key="metric_box2")
 
-    # mínimo/máximo com vírgula/ponto
     min_lap2 = float_input("Excluir voltas com 'Lap Tm' abaixo de (s) (Boxplot)", default=min_lap, key="minlap_box2")
     max_lap2 = float_input("Excluir voltas com 'Lap Tm' acima de (s) (Boxplot)", default=max_lap, key="maxlap_box2")
     if max_lap2 < min_lap2:
         st.warning("No Boxplot, o máximo não pode ser menor que o mínimo. Ajustei o máximo para ficar igual ao mínimo.")
         max_lap2 = float(min_lap2)
 
-    # Stints por sessão
     sel_stints_per_session = {}
     with st.container():
         st.markdown("**Selecione Stint(s) (Boxplot) por sessão:**")
@@ -462,7 +430,6 @@ def main():
             sel = st.multiselect(f"{s} — Stint(s)", options=stints_s, default=stints_s, key=f"stints_box2_{idx}")
             sel_stints_per_session[s] = sel if sel else stints_s
 
-    # maior tamanho após filtros
     max_avail2 = 0
     for s in sel_sessions2:
         df_s = sheets[s].copy()
@@ -475,27 +442,23 @@ def main():
             stints_to_use = sorted(pd.Series(df_s["Stint"]).dropna().unique())
         for stn in stints_to_use if stints_to_use else [None]:
             avail = len(df_s if (stn is None or "Stint" not in df_s.columns) else df_s[df_s["Stint"] == stn])
-            max_avail2 = max(max_avail2, avail)
+            max_avail2 = max(max_avail2, int(avail))
 
-    # slider do boxplot com proteção de faixa
-    min_v2 = 1
-    max_v2 = max(1, max_avail2)
-    default_v2 = min(30, max_v2)
-    if "sample_box2" in st.session_state:
-        try:
-            cur2 = int(st.session_state["sample_box2"])
-        except Exception:
-            cur2 = default_v2
-        st.session_state["sample_box2"] = max(min_v2, min(max_v2, cur2))
+    key_box = "sample_box2"
+    if max_avail2 == 0:
+        min_v2, max_v2, default_v2 = 0, 0, 0
     else:
-        st.session_state["sample_box2"] = default_v2
+        min_v2, max_v2, default_v2 = 1, max_avail2, min(30, max_avail2)
+
+    cur2 = int(st.session_state.get(key_box, default_v2) or default_v2)
+    cur2 = max(min_v2, min(max_v2, cur2))
+    st.session_state[key_box] = cur2
 
     sample2 = st.slider(
         "Amostragem (voltas mais rápidas) (Boxplot)",
-        min_value=min_v2, max_value=max_v2, value=st.session_state["sample_box2"], key="sample_box2"
+        min_value=min_v2, max_value=max_v2, value=cur2, step=1, key=key_box
     )
 
-    # Monta séries para o boxplot
     ys_list2, lbls2, box_sessions2 = [], [], []
     for s in sel_sessions2:
         df_s = sheets[s].copy()
@@ -504,30 +467,30 @@ def main():
             df_s = df_s[df_s["Lap Tm"] >= float(min_lap2)]
             df_s = df_s[df_s["Lap Tm"] <= float(max_lap2)]
         if metric2 not in df_s.columns:
-            st.warning(f"Métrica '{metric2}' não encontrada em {s}. Pulando.")
-            continue
+            st.warning(f"Métrica '{metric2}' não encontrada em {s}. Pulando."); continue
+
         stints_to_use = sel_stints_per_session.get(s, [])
         if not stints_to_use and "Stint" in df_s.columns:
             stints_to_use = sorted(pd.Series(df_s["Stint"]).dropna().unique())
+
         if "Stint" not in df_s.columns or not stints_to_use:
-            df_sel = df_s.nsmallest(sample2, metric2)
+            n_take = int(sample2)
+            df_sel = df_s.nsmallest(min(n_take, len(df_s)), metric2) if n_take > 0 else df_s.head(0)
             y = pd.to_numeric(df_sel[metric2], errors="coerce").dropna().tolist()
-            if y:
-                ys_list2.append(y); lbls2.append(f"{s}"); box_sessions2.append(s)
+            if y: ys_list2.append(y); lbls2.append(f"{s}"); box_sessions2.append(s)
         else:
             for stn in stints_to_use:
                 df_g = df_s[df_s["Stint"] == stn]
                 if df_g.empty: continue
-                df_sel = df_g.nsmallest(sample2, metric2)
+                n_take = int(sample2)
+                df_sel = df_g.nsmallest(min(n_take, len(df_g)), metric2) if n_take > 0 else df_g.head(0)
                 y = pd.to_numeric(df_sel[metric2], errors="coerce").dropna().tolist()
                 if not y: continue
                 ys_list2.append(y); lbls2.append(f"{s} — Stint {int(stn)}"); box_sessions2.append(s)
 
-    st.divider()
-    st.markdown("#### 📊 Boxplot (Independente por sessão/stint)")
+    st.divider(); st.markdown("#### 📊 Boxplot (Independente por sessão/stint)")
     if not ys_list2:
-        st.info("Sem dados para o boxplot com os filtros atuais.")
-        return
+        st.info("Sem dados para o boxplot com os filtros atuais."); return
 
     fig2, ax2 = plt.subplots(figsize=(10, 4))
     bp2 = ax2.boxplot(ys_list2, patch_artist=True)
@@ -544,8 +507,7 @@ def main():
     y_range2 = float(np.nanmax(all_vals2) - np.nanmin(all_vals2)) if all_vals2.size else 1.0
     dy2 = max(0.002 * y_range2, 0.0005)
     for i, box in enumerate(bp2["boxes"]):
-        sess = box_sessions2[i]
-        col = session_to_color.get(sess, base_colors[0])
+        sess = box_sessions2[i]; col = session_to_color.get(sess, base_colors[0])
         box.set_facecolor(col); box.set_edgecolor(col)
         bp2["whiskers"][2*i].set_color(col); bp2["whiskers"][2*i + 1].set_color(col)
         bp2["caps"][2*i].set_color(col); bp2["caps"][2*i + 1].set_color(col)
@@ -556,9 +518,7 @@ def main():
     ax2.set_xticks([])
     ax2.set_xlabel("Grupos (Sessão — Stint)")
     ax2.set_ylabel(labels_map2[metric2])
-    fig2.tight_layout()
-    st.pyplot(fig2, use_container_width=True)
-    plt.close(fig2)
+    fig2.tight_layout(); st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
 if __name__ == "__main__":
     main()
