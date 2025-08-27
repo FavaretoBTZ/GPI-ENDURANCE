@@ -7,6 +7,7 @@ import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D  # <- para legenda dos marcadores
 
 st.set_page_config(page_title="📊 Análise Estatística Endurance", layout="wide")
 
@@ -148,7 +149,6 @@ def annotate_box(ax, bp, ys_list, idx, color, fs, dy):
     y_min = float(np.min(data_i))
     y_max = float(np.max(data_i))
 
-    # mediana
     median_line = bp["medians"][idx]
     median_line.set_color("black")
     median_line.set_linewidth(2.0)
@@ -158,7 +158,6 @@ def annotate_box(ax, bp, ys_list, idx, color, fs, dy):
             color="black", bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
 
-    # Q3 e Q1
     ax.text(x_mid, q3 + dy, f"{q3:.3f}", fontsize=fs, va="bottom", ha="center",
             color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
@@ -166,7 +165,6 @@ def annotate_box(ax, bp, ys_list, idx, color, fs, dy):
             color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
 
-    # Máximo (Maior valor Y) e Mínimo (Menor valor Y)
     ax.text(x_mid, y_max + 2*dy, f"{y_max:.3f}", fontsize=fs, va="bottom", ha="center",
             color="black", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.5, linewidth=0),
             clip_on=True, zorder=5)
@@ -468,7 +466,7 @@ def main():
     metric2 = st.selectbox("Selecione métrica (Boxplot)", options=metric_opts2,
                            format_func=lambda x: labels_map2[x], key="metric_box2")
 
-    # mesmos rótulos (mín/máx)
+    # filtros min/máx do boxplot
     min_lap2 = float_input("Excluir voltas com 'Lap Tm' abaixo de (s) (valor mínimo)", default=min_lap, key="minlap_box2")
     max_lap2 = float_input("Excluir voltas com 'Lap Tm' acima de (s)", default=max_lap, key="maxlap_box2")
     if max_lap2 < min_lap2:
@@ -592,8 +590,8 @@ def main():
     st.pyplot(fig2, use_container_width=True)
     plt.close(fig2)
 
-    # ===== Gráfico: Mínimo · Média · Máximo (mesma ordem do Boxplot Independente) =====
-    st.subheader("📈 Mínimo · Média · Máximo (mesma ordem do Boxplot Independente)")
+    # ===== Gráfico: Mínimo · Média · Máximo (mesma cor da sessão) + valores =====
+    st.subheader("📈 Mínimo · Média · Máximo (mesma ordem do Boxplot) — cores por sessão")
     mins, means, maxs = [], [], []
     for y in ys_list2:
         s = pd.Series(pd.to_numeric(y, errors="coerce")).dropna()
@@ -606,15 +604,50 @@ def main():
 
     x = np.arange(1, len(lbls2) + 1, dtype=float)
     fig3, ax3 = plt.subplots(figsize=(10, 4))
-    ax3.scatter(x, maxs, label="Máximo", marker="^", s=40, zorder=3)
-    ax3.scatter(x, means, label="Média",  marker="o", s=40, zorder=3)
-    ax3.scatter(x, mins, label="Mínimo", marker="v", s=40, zorder=3)
+
+    vals_all = [v for v in (mins + means + maxs) if not np.isnan(v)]
+    y_range = (max(vals_all) - min(vals_all)) if vals_all else 1.0
+    dy = max(0.002 * y_range, 0.0005)
+
+    for i, sess in enumerate(box_sessions2):
+        col = session_to_color.get(sess, "C0")
+
+        if not np.isnan(maxs[i]):
+            ax3.scatter([x[i]], [maxs[i]], marker="^", s=55, color=col, zorder=3)
+            ax3.text(x[i], maxs[i] + dy, f"{maxs[i]:.3f}", ha="center", va="bottom",
+                     fontsize=8, color="black",
+                     bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.6, linewidth=0),
+                     clip_on=True, zorder=4)
+
+        if not np.isnan(means[i]):
+            ax3.scatter([x[i]], [means[i]], marker="o", s=55, color=col, zorder=3)
+            ax3.text(x[i], means[i] + dy, f"{means[i]:.3f}", ha="center", va="bottom",
+                     fontsize=8, color="black",
+                     bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.6, linewidth=0),
+                     clip_on=True, zorder=4)
+
+        if not np.isnan(mins[i]):
+            ax3.scatter([x[i]], [mins[i]], marker="v", s=55, color=col, zorder=3)
+            ax3.text(x[i], mins[i] + dy, f"{mins[i]:.3f}", ha="center", va="bottom",
+                     fontsize=8, color="black",
+                     bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.6, linewidth=0),
+                     clip_on=True, zorder=4)
+
     ax3.set_xlim(0.5, len(x) + 0.5)
     ax3.set_xticks([])
     ax3.set_xlabel("Grupos (mesma ordem do Boxplot)")
     ax3.set_ylabel(labels_map2[metric2])
-    ax3.legend(loc="upper right", fontsize="x-small")
     ax3.grid(axis="y", linestyle=":", linewidth=0.6, alpha=0.6)
+
+    leg1 = ax3.legend(handles=handles2, loc="upper right", fontsize="x-small", title="Sessões")
+    ax3.add_artist(leg1)
+    shape_handles = [
+        Line2D([0], [0], marker="^", linestyle="None", label="Máximo"),
+        Line2D([0], [0], marker="o", linestyle="None", label="Média"),
+        Line2D([0], [0], marker="v", linestyle="None", label="Mínimo"),
+    ]
+    ax3.legend(handles=shape_handles, loc="lower right", fontsize="x-small", title="Estatística")
+
     fig3.tight_layout()
     st.pyplot(fig3, use_container_width=True)
     plt.close(fig3)
