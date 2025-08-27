@@ -1,5 +1,6 @@
 import math
 from typing import Optional
+import re
 
 import pandas as pd
 import numpy as np
@@ -25,7 +26,20 @@ def time_to_seconds(t):
         return pd.NA
 
 def coerce_numeric(series: pd.Series) -> pd.Series:
-    return pd.to_numeric(series.astype(str).str.replace(",", "."), errors="coerce")
+    """Converte para float lidando com separador de milhar e vírgula decimal."""
+    def smart_to_float(x):
+        s = str(x).strip()
+        if s == "" or s.lower() in {"nan", "none"}:
+            return pd.NA
+        # remove separador de milhar (ponto) quando seguido de 3 dígitos
+        s = re.sub(r'\.(?=\d{3}\b)', '', s)
+        # vírgula decimal -> ponto
+        s = s.replace(',', '.')
+        try:
+            return float(s)
+        except:
+            return pd.NA
+    return series.apply(smart_to_float)
 
 def find_lap_column(df: pd.DataFrame) -> str:
     """Tenta localizar a coluna de número de volta. Retorna/garante 'Lap'."""
@@ -70,6 +84,11 @@ def load_excel(file) -> dict:
 def preprocess_df(df: pd.DataFrame) -> pd.DataFrame:
     """Converte *Tm* em seg; tenta numérico no resto quando fizer sentido."""
     out = df.copy()
+
+    # Normaliza SSTRAP se vier como 'SSTRAP Tm' (texto)
+    if "SSTRAP Tm" in out.columns and "SSTRAP" not in out.columns:
+        out["SSTRAP"] = coerce_numeric(out["SSTRAP Tm"])
+
     find_lap_column(out)  # cria/normaliza 'Lap'
     for c in out.columns:
         if c == "SSTRAP Tm":
@@ -96,13 +115,16 @@ def derive_stints(df: pd.DataFrame, lap_time_col: str, threshold: float = 300.0)
     out["Stint"] = stints
     return out
 
-def get_filtered(df: pd.DataFrame, stint_choice, max_lap_seconds: float, is_time_metric: bool) -> pd.DataFrame:
+def get_filtered(df: pd.DataFrame, stint_choice, min_lap_seconds, max_lap_seconds, is_time_metric: bool) -> pd.DataFrame:
+    """Aplica filtros por Stint e faixa (min/max) de Lap Tm quando métrica é de tempo."""
     d = df.copy()
     if stint_choice != "All":
         d = d[d["Stint"] == stint_choice]
     if is_time_metric and "Lap Tm" in d.columns:
         d = d[pd.to_numeric(d["Lap Tm"], errors="coerce").notna()]
-        d = d[d["Lap Tm"] <= max_lap_seconds]
+        if min_lap_seconds is not None:
+            d = d[d["Lap Tm"] >= float(min_lap_seconds)]
+        d = d[d["Lap Tm"] <= float(max_lap_seconds)]
     return d
 
 def annotate_box(ax, bp, ys_list, idx, color, fs, dy):
@@ -142,8 +164,9 @@ def main():
 
     sheets = load_excel(uploaded)
 
-    # Remove SEMPRE a última aba
-    if len(sheets) >= 1:
+    # ---- Novo: opção para remover a última aba (em vez de sempre remover) ----
+    remove_last_sheet = st.checkbox("Remover última aba da planilha", value=True)
+    if remove_last_sheet and len(sheets) >= 1:
         last_key = list(sheets.keys())[-1]
         del sheets[last_key]
 
@@ -208,11 +231,20 @@ def main():
     ylabel = labels_map[metric]
     is_time_metric = metric.lower().endswith("tm")
 
+    # ---- NOVO: filtro mínimo (acima do máximo), com checkbox ----
+    use_min_filter = st.checkbox("Excluir voltas com 'Lap Tm' abaixo de (s)", value=False, key="min_filter_main")
+    min_lap = None
+    if use_min_filter:
+        min_lap = st.number_input("Excluir voltas com 'Lap Tm' abaixo de (s) (valor mínimo)", value=0.0, key="min_lap_main")
+
     max_lap = st.number_input("Excluir voltas com 'Lap Tm' acima de (s)", value=60.0)
 
+    # Sliders de amostragem por sessão (usando os filtros novos)
     session_sample = {}
+    filtered_exports = {}  # para downloads por sessão
+
     for s in sessions:
-        df_f = get_filtered(sheets[s], session_stint[s], max_lap, is_time_metric)
+        df_f = get_filtered(sheets[s], session_stint[s], min_lap, max_lap, is_time_metric)
         avail = len(df_f)
         session_sample[s] = st.slider(
             f"Amostragem (voltas mais rápidas) em '{s}'",
@@ -223,11 +255,13 @@ def main():
 
     series_x, series_y, labels = [], [], []
     for s in sessions:
-        df_f = get_filtered(sheets[s], session_stint[s], max_lap, is_time_metric)
+        df_f = get_filtered(sheets[s], session_stint[s], min_lap, max_lap, is_time_metric)
         if metric not in df_f.columns:
             st.warning(f"'{metric}' não encontrado em {s}. Pulando.")
             continue
         df_sel = df_f.nsmallest(session_sample[s], metric)
+        filtered_exports[s] = df_sel.copy()  # guarda para download
+
         lap_col = find_lap_column(df_sel)
         if x_axis_mode == "Lap":
             df_sel = df_sel.sort_values(lap_col)
@@ -283,7 +317,9 @@ def main():
 
     ax.set_xlabel("Lap" if x_axis_mode == "Lap" else "Amostra")
     ax.set_ylabel(ylabel)
+    fig.tight_layout()
     st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
 
     # ---- Estatísticas ----
     st.header("📊 Estatísticas Descritivas por Amostragem")
@@ -297,8 +333,20 @@ def main():
     else:
         st.info("Sem dados suficientes para estatísticas descritivas.")
 
+    # ---- Download dos dados filtrados por sessão ----
+    st.subheader("⬇️ Baixar dados filtrados (por sessão)")
+    for s in sessions:
+        if s in filtered_exports and not filtered_exports[s].empty:
+            st.download_button(
+                label=f"Baixar '{s}' (CSV)",
+                data=filtered_exports[s].to_csv(index=False).encode("utf-8"),
+                file_name=f"{s}_filtrado.csv",
+                mime="text/csv",
+                key=f"dl_{s}"
+            )
+
     # -------------------- BLOCO 2 (Métricas Avançadas por Stint) --------------------
-    st.header(f"📋 Métricas Avançadas por Stint (Somente P1, Lap Tm ≤ {max_lap:.1f}s)")
+    st.header(f"📋 Métricas Avançadas por Stint (Somente P1, Lap Tm entre {float(min_lap) if (use_min_filter and min_lap is not None) else 0:.1f}s e {max_lap:.1f}s)")
     p1 = [s for s in sheets if s.strip().endswith("P1")]
     for special in ["42 - V.FOREST - P1", "22 - LANCASTER-ABRUNH(L)-MORAES", "42 - V.FOREST(L)-L.FOREST-R.MAR"]:
         if special in sheets and special not in p1:
@@ -310,8 +358,14 @@ def main():
         if "Lap Tm" not in df_s.columns:
             continue
         df_s_local = df_s[pd.to_numeric(df_s["Lap Tm"], errors="coerce").notna()]
+        if use_min_filter and min_lap is not None:
+            df_s_local = df_s_local[df_s_local["Lap Tm"] >= float(min_lap)]
+
         for stn in sorted(pd.Series(df_s_local["Stint"]).dropna().unique()):
-            df_grp = df_s_local[(df_s_local["Stint"] == stn) & (df_s_local["Lap Tm"] <= max_lap)]
+            cond = (df_s_local["Stint"] == stn) & (df_s_local["Lap Tm"] <= float(max_lap))
+            if use_min_filter and min_lap is not None:
+                cond &= (df_s_local["Lap Tm"] >= float(min_lap))
+            df_grp = df_s_local[cond]
             if df_grp.empty:
                 continue
 
@@ -384,7 +438,16 @@ def main():
         labels_map2["SSTRAP"] = "Velocidade Máxima (SSTRAP)"
     metric2 = st.selectbox("Selecione métrica (Boxplot)", options=metric_opts2, format_func=lambda x: labels_map2[x], key="metric_box2")
 
-    max_lap2 = st.number_input("Excluir voltas com 'Lap Tm' acima de (s) (Boxplot)", value=float(max_lap), key="maxlap_box2")
+    # ---- NOVO: filtro mínimo (Boxplot) + máximo existente ----
+    use_min_filter2 = st.checkbox("Excluir voltas com 'Lap Tm' abaixo de (s) (Boxplot)", value=use_min_filter, key="min_filter_box2")
+    min_lap2 = None
+    if use_min_filter2:
+        min_lap2 = st.number_input("Excluir voltas com 'Lap Tm' abaixo de (s) (Boxplot)",
+                                   value=float(min_lap) if (use_min_filter and min_lap is not None) else 0.0,
+                                   key="minlap_box2")
+
+    max_lap2 = st.number_input("Excluir voltas com 'Lap Tm' acima de (s) (Boxplot)",
+                               value=float(max_lap), key="maxlap_box2")
 
     # —— Multiselect de Stints POR sessão selecionada
     sel_stints_per_session = {}
@@ -411,7 +474,9 @@ def main():
         df_s = sheets[s].copy()
         if "Lap Tm" in df_s.columns:
             df_s = df_s[pd.to_numeric(df_s["Lap Tm"], errors="coerce").notna()]
-            df_s = df_s[df_s["Lap Tm"] <= max_lap2]
+            if use_min_filter2 and min_lap2 is not None:
+                df_s = df_s[df_s["Lap Tm"] >= float(min_lap2)]
+            df_s = df_s[df_s["Lap Tm"] <= float(max_lap2)]
         stints_to_use = sel_stints_per_session.get(s, [])
         if not stints_to_use and "Stint" in df_s.columns:
             stints_to_use = sorted(pd.Series(df_s["Stint"]).dropna().unique())
@@ -435,7 +500,9 @@ def main():
         df_s = sheets[s].copy()
         if "Lap Tm" in df_s.columns:
             df_s = df_s[pd.to_numeric(df_s["Lap Tm"], errors="coerce").notna()]
-            df_s = df_s[df_s["Lap Tm"] <= max_lap2]
+            if use_min_filter2 and min_lap2 is not None:
+                df_s = df_s[df_s["Lap Tm"] >= float(min_lap2)]
+            df_s = df_s[df_s["Lap Tm"] <= float(max_lap2)]
         if metric2 not in df_s.columns:
             st.warning(f"Métrica '{metric2}' não encontrada em {s}. Pulando.")
             continue
@@ -507,8 +574,9 @@ def main():
     ax2.set_xticks([])
     ax2.set_xlabel("Grupos (Sessão — Stint)")
     ax2.set_ylabel(labels_map2[metric2])
+    fig2.tight_layout()
     st.pyplot(fig2, use_container_width=True)
+    plt.close(fig2)
 
 if __name__ == "__main__":
     main()
-
